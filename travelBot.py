@@ -1,33 +1,19 @@
-import streamlit as st
-from langchain_ollama import OllamaLLM
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_community.retrievers import WikipediaRetriever
+from pathlib import Path
+
 import chromadb
+import streamlit as st
+from langchain_community.retrievers import WikipediaRetriever
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_ollama import OllamaLLM
 
 # Function to convert documents to text
 def convert_docs_to_text(documents):
     texts = []
     for document in documents:
-        with open(document, 'r') as file:
+        with open(document, "r", encoding="utf-8") as file:
             text = file.read()
             texts.append(text)
     return texts
-
-# Function to split text into chunks
-def split_text_into_chunks(text, chunk_size=100):
-    chunks = []
-    for i in range(0, len(text), chunk_size):
-        chunks.append(text[i:i+chunk_size])
-    return chunks
-
-# Function to generate embeddings
-def generate_embeddings(chunks):
-    embeddings = []
-    for chunk in chunks:
-        for text in chunk:
-            embedding_response = ollama.embeddings(model="llama3", prompt=text)
-            embeddings.append(embedding_response)
-    return embeddings
 
 # Define the retriever tool
 def retriever_tool(user_input):
@@ -39,8 +25,8 @@ def retriever_tool(user_input):
 # Define the default tool
 def default_tool(user_input, history):
     query_results = collection.query(query_texts=[user_input], n_results=1)
-    context = convert_docs_to_text(query_results["documents"][0])
-    context += ''.join(history)
+    context = query_results["documents"][0][0]
+    context += "".join(history)
     result = chain.invoke({"context": context, "question": user_input})
     return context, result
 
@@ -54,8 +40,9 @@ class Agent:
 
     def handle_conversation(self, user_input, history):
         places = ["tokyo", "bangkok", "bali", "kyoto", "singapore", "paris", "rome", "barcelona", "amsterdam", "berlin"]
+        normalized_input = user_input.strip().lower()
 
-        if user_input in places:
+        if normalized_input in places:
             context, result = self.tools['retriever'](user_input)
         else:
             context, result = self.tools['default'](user_input, history)
@@ -66,14 +53,17 @@ class Agent:
 chroma_client = chromadb.Client()
 collection = chroma_client.create_collection(name="Collection")
 
-# Define your documents
-doc1 = "C:\\Users\\malin\\Documents\\TravelBot\\Asia Destinations.txt"
-doc2 = "C:\\Users\\malin\\Documents\\TravelBot\\Europe Destinations.txt"
-doc3 = "C:\\Users\\malin\\Documents\\TravelBot\\Travel Advice.txt"
-documents = [doc1, doc2, doc3]
+# Define local knowledge files using project-relative paths
+project_dir = Path(__file__).resolve().parent
+documents = [
+    project_dir / "Asia Destinations.txt",
+    project_dir / "Europe Destinations.txt",
+    project_dir / "Travel Advice.txt",
+]
+document_texts = convert_docs_to_text(documents)
 
 # Add the documents to ChromaDB
-collection.add(documents=documents, ids=[f"id{i}" for i in range(len(documents))])
+collection.add(documents=document_texts, ids=[f"id{i}" for i in range(len(document_texts))])
 
 # Setup the model and prompt
 template = '''
@@ -103,11 +93,12 @@ st.title("Travel Advisor")
 st.write("Type in a place to learn more about it!")
 
 user_input = st.text_input("Enter a place or question:")
-history = []
+if "history" not in st.session_state:
+    st.session_state.history = []
 
 if user_input:
-    context, result = agent.handle_conversation(user_input, history)
-    history.append(f"User: {user_input}\nAI: {result}\n")
+    context, result = agent.handle_conversation(user_input, st.session_state.history)
+    st.session_state.history.append(f"User: {user_input}\nAI: {result}\n")
     
     st.subheader("Context")
     st.write(context)
